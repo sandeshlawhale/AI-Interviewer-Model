@@ -118,7 +118,7 @@ async function initializeChains() {
   `,
     ],
     new MessagesPlaceholder("chat_history"),
-    ["user", "{input}"],
+    ["user", "{z}"],
   ]);
 
   //   Closing or exit behavior:
