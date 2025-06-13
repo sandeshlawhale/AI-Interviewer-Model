@@ -27,28 +27,82 @@ const model = new ChatOpenAI({
   temperature: 0.7,
 });
 
-// Job Description as Context
 const jobDescription = `
 Job Title: Junior Software Engineer
 Company: TechCorp
 Description: TechCorp is seeking a Junior Software Engineer to join our innovative team. The candidate will work on developing web applications using JavaScript, React, and Node.js. Responsibilities include writing clean code, collaborating with cross-functional teams, and participating in agile development processes. The ideal candidate is passionate about technology, has strong problem-solving skills, and is eager to learn. Required skills: JavaScript, React, Node.js, teamwork, and communication. Preferred: Experience with cloud platforms (e.g., AWS).
 Company Values: Innovation, Collaboration, Continuous Learning.
 `;
+const mainPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `You are a HR interviewer of company mentioned in the JD conducting a mock interview and the JD is: {context}.
+  
+  Your role:
+  - Begin with a friendly greeting and introducing yourself, for your name choose any from the indian male names.
+  - Ask them to introduce themselves.
+  - Speak in a natural, casual tone — not overly formal or scripted.
+  - Avoid robotic phrases like “I’m excited to learn more...” or “Hello and welcome...” — keep it real and human.
+  - Use smooth transitions like “Let’s go to the next question” or move to new topics naturally.
+  - Ask 1–2 follow-ups per topic.
+    - Go deeper if the answer is strong.
+    - Rephrase/simplify if it's unclear.
+  - If answers are generic or repeated:
+    - Point it out gently
+    - Ask for specifics
+    - Suggest improvements and offer a chance to retry.
+  - If they ask for help, offer tips:
+    - “Mention tools or examples”
+    - “Use the STAR format”
+    - “Tie it to a real project or goal”
+  - Remember past answers and clarify inconsistencies.`,
+  ],
+  new MessagesPlaceholder("chat_history"),
+  ["user", "{input}"],
+]);
+const feedbackPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `You are an HR assistant giving feedback after each answer.
+  
+  - Acknowledge naturally (e.g., “Got it”, “Okay”).
+  - If vague or too short:
+    - Suggest adding education, skills, tools, projects, or goals.
+    - Ex: “as asked in question, you can Mention your background, passions, and tools you've used or few real world examples if any to improve your response.”
+  - If the answer might have the revise condition from the feedback then End with: “Would you like to revise or move to the next question?”`,
+  ],
+  new MessagesPlaceholder("chat_history"),
+  ["user", "{input}"],
+]);
+const finalFeedbackPrompt = ChatPromptTemplate.fromMessages([
+  new MessagesPlaceholder("chat_history"),
+  [
+    "system",
+    `Summarize the interview by returning a JavaScript array of objects.
+  Each object should include:
+  
+  - question: question asked by interviewer avoid any personal touch here.
+  - response: The user's original answer that user provided to that answer, pick this answer form chat history, it should be as it is and it is human response
+  - feedback: Specific, constructive feedback
+  - strengths: Key strengths shown in this answer
+  - improvements: Specific areas to improve in this answer
+  - response_depth: One of ["Level 1", "Level 2", "Level 3"]
+  
+  Output only a valid JavaScript array. Be concise, objective, and helpful.`,
+  ],
+]);
 
-// Create Documents from Job Description
-const docs = [new Document({ pageContent: jobDescription })];
-
-// Text Splitter
-const splitter = new RecursiveCharacterTextSplitter({
-  chunkSize: 100,
-  chunkOverlap: 20,
-});
-
-// Instantiate Embeddings
-const embeddings = new OpenAIEmbeddings();
-
-// Create Vector Store
+//load docs and create vector store
 async function initializeVectorStore() {
+  const docs = [new Document({ pageContent: jobDescription })];
+
+  const splitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 1500,
+    chunkOverlap: 20,
+  });
+
+  const embeddings = new OpenAIEmbeddings();
+
   const splitDocs = await splitter.splitDocuments(docs);
   return await MemoryVectorStore.fromDocuments(splitDocs, embeddings);
 }
@@ -58,7 +112,6 @@ async function initializeChains() {
   const vectorstore = await initializeVectorStore();
   const retriever = vectorstore.asRetriever({ k: 2 });
 
-  // History-Aware Retriever Prompt
   const retrieverPrompt = ChatPromptTemplate.fromMessages([
     new MessagesPlaceholder("chat_history"),
     ["user", "{input}"],
@@ -68,93 +121,29 @@ async function initializeChains() {
     ],
   ]);
 
-  // Create History-Aware Retriever
   const retrieverChain = await createHistoryAwareRetriever({
     llm: model,
     retriever,
     rephrasePrompt: retrieverPrompt,
   });
 
-  const prompt = ChatPromptTemplate.fromMessages([
-    [
-      "system",
-      `You are an HR interviewer trainee that helps students practice for interviews based on a job description at TechCorp. The position is: {context}.
-  
-  Your behavior:
-  - Begin by greeting the candidate, introducing yourself as the HR representative from TechCorp, and ask the candidate to introduce themselves.
-  - Do not specify your own name or use placeholders for the candidate’s name.
-  - Ask questions based on the job description or based on their personal introduction (e.g., skills, tools, or past experience).
-  - Avoid saying “moving on to a different topic from the job description.” 
-    - Instead, say “Let’s go to the next question,” “Next up,” or just proceed to the next question naturally.
-  
-  Questioning behavior:
-  - Do **not** start every question with “Thank you for responding.”
-  - Maintain a professional, friendly, and natural tone.
-  - Ask 1-2 follow-up questions per topic.
-    - If the answer is strong, ask a deeper or more technical follow-up.
-    - If it’s weak or unclear, rephrase or simplify it.
-    - After 1-2 follow-ups, change to a different relevant topic based on the job description.
-  - If the candidate gives similar or generic answers across multiple questions:
-    - Gently point this out by saying it might not fit the current context.
-    - Ask for more specific examples or a more tailored answer.
-    - Provide suggestions to improve the response and offer them a chance to revise or move on.
-  
- 
-  
-  Answer guidance:
-  - If the candidate asks: “How should I answer this?” or “Can you give me a hint?” — provide general guidance:
-    - “Share a specific experience or situation,”
-    - “Mention tools or technologies used,”
-    - “Use a structure: context, action, result,”
-    - “Connect your answer to a real-world project.”
-  
-     Feedback after each response:
-  1. Acknowledge the response naturally (e.g., “Got it”, “Okay”, “Makes sense”).
-  2. If the answer was too short, vague, or lacking depth—especially in the introduction (e.g., just saying "I'm XYZ"):
-     - Encourage the candidate to expand by mentioning things like their education, skills, projects, interests, or career goals.
-     - Example guidance: “In interviews, it's helpful to include a bit more detail about your background, such as your degree, what you're passionate about, and any projects or tools you've worked with.”
-     - After each feedback ask the user do they want to answer again or will move towards next question.
-  3. Highlight what was good and suggest what could be added or improved.
-  4. Ask: “Would you like to revise your answer, or should we move to the next question?”
-  
-    Inconsistency detection:
-  - Actively remember the candidate’s previous answers during the session.
-  - If the candidate mentions contradictory or mismatching details (e.g., different technologies used for the same project), politely point it out.
-  - Example: If the candidate first says they used React Native and later says they used Next.js for the same project, ask for clarification.
-  - Example prompt:
-    “Earlier, you mentioned you used React Native for this project, but now you mentioned Next.js. Could you clarify which one you used, or were both involved in different ways?”
-
-  Closing or exit behavior:
-  - If the candidate says something like “Let’s end this,” “That’s enough,” or “I want to stop,” or you think the quetion is enough.
-  - Confirm their intent: “Would you like to continue the interview or end it here?”
-  - If they choose to continue, resume with the next question naturally.
-  - If they choose to end, politely thank them and provide the following.
-    - General feedback on their performance (e.g., strengths and areas for improvement).
-    - A table summarizing:
-      | Question | User's Answer (Short Summary) | Feedback |
-    - note*- the question and use answers in tabular format should be one words "like the introduction, tech stack  or the exprerience "
-  `,
-    ],
-    new MessagesPlaceholder("chat_history"),
-    ["user", "{input}"],
-  ]);
-
-  // Create Document Chain
   const chain = await createStuffDocumentsChain({
     llm: model,
-    prompt,
+    prompt: mainPrompt,
   });
 
-  // Create Conversation Chain
   return await createRetrievalChain({
     combineDocsChain: chain,
     retriever: retrieverChain,
   });
 }
 
-// Conduct Interview in Terminal
 async function conductInterview() {
   const conversationChain = await initializeChains();
+
+  const finalFeedbackChain = finalFeedbackPrompt.pipe(model);
+  const feedbackChain = feedbackPrompt.pipe(model);
+
   let chatHistory = [];
 
   console.log("=== TechCorp Junior Software Engineer Interview ===");
@@ -162,8 +151,8 @@ async function conductInterview() {
 
   // Start with an initial question
   let response = await conversationChain.invoke({
-    chat_history: chatHistory,
     input: "Start the interview with an initial question.",
+    chat_history: chatHistory,
   });
 
   console.log("HR:", response.answer);
@@ -175,17 +164,64 @@ async function conductInterview() {
       rl.question("Your Answer: ", resolve)
     );
 
-    if (studentAnswer.toLowerCase() === "exit") {
-      console.log("=== Interview Ended ===");
-      break;
+    const lower = studentAnswer.toLowerCase();
+    if (lower === "exit") {
+      console.log(
+        "\nHR: Would you like to continue the interview or end it here?"
+      );
+      const confirmation = await new Promise((resolve) =>
+        rl.question("Your Answer (yes to continue / no to end): ", resolve)
+      );
+      if (confirmation.toLowerCase().startsWith("n")) {
+        console.log(
+          "\nHR: Thank you for your time! Here's your overall feedback:\n"
+        );
+
+        const finalFeedback = await finalFeedbackChain.invoke({
+          chat_history: chatHistory,
+        });
+
+        console.log(finalFeedback.content);
+        console.log("chatHistory", chatHistory);
+        chatHistory = [];
+        break;
+      } else {
+        console.log("HR: Great! Let's continue.\n");
+        continue;
+      }
     }
 
-    // Update chat history with student's answer
     chatHistory.push(new HumanMessage(studentAnswer));
 
-    // Generate follow-up question
-    response = await conversationChain.invoke({
+    // 💬 Step 1: Give Feedback
+    const feedbackResponse = await feedbackChain.invoke({
       input: studentAnswer,
+      chat_history: chatHistory,
+    });
+
+    console.log("\nHR (Feedback):", feedbackResponse.content);
+    // chatHistory.push(new AIMessage(feedbackResponse.content));
+
+    // Ask if they want to revise
+    const reviseChoice = await new Promise((resolve) =>
+      rl.question(
+        "Would you like to revise your answer or want to move on (yes to revise): ",
+        resolve
+      )
+    );
+
+    if (reviseChoice.toLowerCase().includes("yes")) {
+      const revisedAnswer = await new Promise((resolve) =>
+        rl.question("Your Revised Answer: ", resolve)
+      );
+      chatHistory.pop();
+      chatHistory.push(new HumanMessage(revisedAnswer));
+    }
+
+    // 💬 Step 2: Next Question
+    response = await conversationChain.invoke({
+      input:
+        "Ask the next question or ask the follow up question to the previous one.",
       chat_history: chatHistory,
     });
 
